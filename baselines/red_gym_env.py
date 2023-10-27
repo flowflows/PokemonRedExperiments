@@ -5,6 +5,7 @@ import os
 from math import floor, sqrt
 import json
 from pathlib import Path
+from enum import Enum
 
 import numpy as np
 from einops import rearrange
@@ -43,6 +44,9 @@ class LoopDetector:
                 if repetitions > len(self.window) / loop_length:
                     return True
         return False
+
+level_reward = 100
+explore_reward = 150
 
 class RedGymEnv(Env):
 
@@ -180,6 +184,7 @@ class RedGymEnv(Env):
         self.last_health = 1
         self.total_healing_rew = 0
         self.died_count = 0
+        self.party_size = 0
         self.step_count = 0
         self.progress_reward = self.get_game_state_reward()
         self.total_reward = sum([val for _, val in self.progress_reward.items()])
@@ -236,6 +241,7 @@ class RedGymEnv(Env):
             self.update_seen_coords()
             
         self.update_heal_reward()
+        self.party_size = self.read_m(0xD163)
 
         new_reward, new_prog = self.update_reward()
         
@@ -300,8 +306,12 @@ class RedGymEnv(Env):
             expl = ('coord_count', len(self.seen_coords))
         self.agent_stats.append({
             'step': self.step_count, 'x': self.x_pos, 'y': self.y_pos, 'map': map_n,
+            'map_location': self.get_map_location(map_n),
             'last_action': action,
-            'pcount': self.read_m(0xD163), 'levels': levels, 'ptypes': self.read_party(),
+            'pcount': self.read_m(0xD163), 
+            'levels': levels, 
+            'levels_sum': sum(levels),
+            'ptypes': self.read_party(),
             'hp': self.read_hp_fraction(),
             expl[0]: expl[1],
             'deaths': self.died_count, 'badge': self.get_badges(),
@@ -362,9 +372,9 @@ class RedGymEnv(Env):
     def group_rewards(self):
         prog = self.progress_reward
         # these values are only used by memory
-        return (prog['level'] * 100 / self.reward_scale, 
+        return (prog['level'] * level_reward / self.reward_scale, 
                 self.read_hp_fraction()*2000, 
-                prog['explore'] * 150 / (self.explore_weight * self.reward_scale))
+                prog['explore'] * explore_reward / (self.explore_weight * self.reward_scale))
                #(prog['events'], 
                # prog['levels'] + prog['party_xp'], 
                # prog['explore'])
@@ -375,6 +385,14 @@ class RedGymEnv(Env):
         
         def make_reward_channel(r_val):
             col_steps = self.col_steps
+            # truncate so status bar does not overflow
+            # this used to throw an exception but now is silent!
+            # if you are filling the reward bar you should scale it down
+            # in group_rewards function instead of letting it truncate
+            max_r_val = (w-1) * h * col_steps
+            # truncate progress bar. if hitting this
+            # you should scale down the reward in group_rewards!
+            r_val = min(r_val, max_r_val)
             row = floor(r_val / (h * col_steps))
             memory = np.zeros(shape=(h, w), dtype=np.uint8)
             memory[:, :row] = 255
@@ -428,7 +446,7 @@ class RedGymEnv(Env):
                     self.s_path / Path(f'curframe_{self.instance_id}.jpeg'), 
                     self.render(reduce_res=False))
             except Exception as e:
-                    print(f"Error saving image: {e}")
+                    print(f"\nError saving image: {e}. instance:{self.instance_id}")
 
         if self.print_rewards and done:
             print('', flush=True)
@@ -440,13 +458,13 @@ class RedGymEnv(Env):
                         fs_path / Path(f'frame_r{self.total_reward:.4f}_{self.reset_count}_small.jpeg'), 
                         obs_memory)
                 except Exception as e:
-                    print(f"Error saving image: {e}")
+                    print(f"\nError saving image: {e}. instance:{self.instance_id}")
                 try:
                     plt.imsave(
                         fs_path / Path(f'frame_r{self.total_reward:.4f}_{self.reset_count}_full.jpeg'), 
                         self.render(reduce_res=False))
                 except Exception as e:
-                    print(f"Error saving image: {e}")
+                    print(f"\nError saving image: {e}. instance:{self.instance_id}")
 
         if self.save_video and done:
             self.full_frame_writer.close()
@@ -498,7 +516,9 @@ class RedGymEnv(Env):
     
     def update_heal_reward(self):
         cur_health = self.read_hp_fraction()
-        if cur_health > self.last_health:
+        # if health increased and party size did not change
+        if (cur_health > self.last_health and
+                self.read_m(0xD163) == self.party_size):
             if self.last_health > 0:
                 heal_amount = cur_health - self.last_health
                 if heal_amount > 0.5:
@@ -526,6 +546,8 @@ class RedGymEnv(Env):
         0,
     )
 
+
+    
     def get_game_state_reward(self, print_stats=False):
         # addresses from https://datacrystal.romhacking.net/wiki/Pok%C3%A9mon_Red/Blue:RAM_map
         # https://github.com/pret/pokered/blob/91dc3c9f9c8fd529bb6e8307b58b96efa0bec67e/constants/event_constants.asm
@@ -615,3 +637,44 @@ class RedGymEnv(Env):
         return (100 * 100 * self.read_bcd(self.read_m(0xD347)) + 
                 100 * self.read_bcd(self.read_m(0xD348)) +
                 self.read_bcd(self.read_m(0xD349)))
+    
+    def get_map_location(self, map_idx):
+        map_locations = {
+            0: "Pallet Town",
+            1: "Viridian City",
+            2: "Pewter City",
+            3: "Cerulean City",
+            12: "Route 1",
+            13: "Route 2",
+            14: "Route 3",
+            15: "Route 4",
+            33: "Route 22",
+            37: "Red house first",
+            38: "Red house second",
+            39: "Blues house",
+            40: "oaks lab",
+            41: "Pokémon Center (Viridian City)",
+            42: "Poké Mart (Viridian City)",
+            43: "School (Viridian City)",
+            44: "House 1 (Viridian City)",
+            47: "Gate (Viridian City/Pewter City) (Route 2)",
+            49: "Gate (Route 2)",
+            50: "Gate (Route 2/Viridian Forest) (Route 2)",
+            51: "viridian forest",
+            52: "Pewter Museum (floor 1)",
+            53: "Pewter Museum (floor 2)",
+            54: "Pokémon Gym (Pewter City)",
+            55: "House with disobedient Nidoran♂ (Pewter City)",
+            56: "Poké Mart (Pewter City)",
+            57: "House with two Trainers (Pewter City)",
+            58: "Pokémon Center (Pewter City)",
+            59: "Mt. Moon (Route 3 entrance)",
+            60: "Mt. Moon",
+            61: "Mt. Moon",
+            68: "Pokémon Center (Route 4)",
+            193: "Badges check gate (Route 22)"
+        }
+        if map_idx in map_locations.keys():
+            return map_locations[map_idx]
+        else:
+            return "Unknown Location"
