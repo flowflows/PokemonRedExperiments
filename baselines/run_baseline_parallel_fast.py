@@ -15,12 +15,23 @@ def load_file(file):
         "0": '',
         "1": 'session_e41c9eff/poke_38207488_steps', #default
         "A": 'session_62a584f7/poke_4423680_steps', #A: 4.4
-        "B": 'session_1ccee64f/poke_14417920_steps', #B: A -> B, 4.4 mil
-        "C": 'session_1ccee64f/poke_14417920_steps', #C: B -> C, 12.7 mil
-        "D": 'session_d7bf13d8/poke_1105920_steps', #D: C -> D, CPU = 6, ep_multi = 30
-        "E": 'session_90efa56b/poke_6144_steps', #E: D -> E, CPU = 12, 512 steps
-        "F": 'session_dbd6c431/poke_114688_steps', #F: E -> F, 3.5k step per epoch first save
-        "G": 'session_99f314e8/poke_4751360_steps' #G: F -> G, 5k steps per epoch
+        "B": 'session_1ccee64f/poke_14417920_steps', # A ->, 4.4 mil
+        "C": 'session_1ccee64f/poke_14417920_steps', # B ->, 12.7 mil
+        "D": 'session_d7bf13d8/poke_1105920_steps', # C ->, CPU = 6, ep_multi = 30
+        "E": 'session_90efa56b/poke_6144_steps', # D ->, CPU = 12, 512 steps
+        "F": 'session_dbd6c431/poke_114688_steps', # E ->, 3.5k step per epoch first save
+        "G": 'session_99f314e8/poke_4751360_steps', # F ->, 5k steps per epoch
+        "H": 'session_41b581ec/poke_7208960_steps', # G ->, 10k steps
+        "I": 'session_f46b8c7a/poke_57344_steps', #I
+        "J": 'session_04f3bcfd/poke_409600_steps',
+        "K": 'session_3f0b27ce/poke_425984_steps',
+        "512": 'session_7b47178a/poke_1024000_steps',
+        "5120": 'session_1afae984/poke_3686400_steps', # K ->, 5k steps
+        "N": '',
+        "O": '',
+        "P": '',
+        "K": '',
+        "K": '',
     }
     return files.get(file, "Invalid File.")
 
@@ -39,27 +50,27 @@ def make_env(rank, env_conf, seed=0):
     set_random_seed(seed)
     return _init
 
+sess_id = str(uuid.uuid4())[:8]
+sess_path = Path(f'session_{sess_id}')
+
 if __name__ == '__main__':
     # Load which file to start training from, "0" = none
-    use_wandb_logging = False
-    file_name = load_file("F")
+    use_wandb_logging = True
+    file_name = load_file("C")
     endless = True
 
     cpu_dynamic = False
-    max_num_cpu = 50
+    max_num_cpu = 16
     cpu_multi = 1000
     num_cpu = 16 # Starting CPU
 
     epoch_base = 512
-    epoch_multi = 20
+    epoch_multi = 10
     learn_steps = 60
     
-    reward_multi = 6
-    explore_multi = 3
+    reward_multi = 3
+    explore_multi = 1
     simulated_frame = 2_000_000.0
-
-    sess_id = str(uuid.uuid4())[:8]
-    sess_path = Path(f'session_{sess_id}')
 
     while num_cpu <= max_num_cpu and endless == True:
         epoch_length = epoch_base * epoch_multi
@@ -106,7 +117,7 @@ if __name__ == '__main__':
                     else:
                         model = PPO('CnnPolicy', env, verbose=1, n_steps=epoch_length, batch_size=128, n_epochs=3, gamma=0.998)
             
-                    model.learn(total_timesteps=(epoch_length)*num_cpu*cpu_multi // 16, callback=CallbackList(callbacks))
+                    model.learn(total_timesteps=(epoch_length)*num_cpu*cpu_multi // 8, callback=CallbackList(callbacks))
 
                     if use_wandb_logging:
                         run.finish()

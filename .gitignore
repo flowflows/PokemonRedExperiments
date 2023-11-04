@@ -12,3 +12,4 @@ curframe_*
 .history
 .env
 PokemonRed.gb.state
+wandb

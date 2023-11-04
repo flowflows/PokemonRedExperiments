@@ -19,10 +19,91 @@ import pandas as pd
 from gymnasium import Env, spaces
 from pyboy.utils import WindowEvent
 
-class LoopDetector:
-    def __init__(self, window_size=100):
+class AutoValueEnum(Enum):
+    def __str__(self):
+        return str(self.value)
+
+    def __int__(self):
+        return self.value
+
+class MEM(AutoValueEnum):
+    MAP_NUM = 0xD35E
+
+class LOC(Enum):
+    PALLET_TOWN = 0
+    VIRIDIAN_CITY = 1
+    PEWTER_CITY = 2
+    CERULEAN_CITY = 3
+    LAVENDER_TOWN = 4
+    VERMILION_CITY = 5
+    CELADON_CITY = 6
+    FUCHSIA_CITY = 7
+    CINNABAR_ISLAND = 8
+    INDIGO_PLATEAU = 9
+    SAFFRON_CITY = 10
+    ROUTE_1 = 12
+    ROUTE_2 = 13
+    ROUTE_3 = 14
+    ROUTE_4 = 15
+    ROUTE_5 = 16
+    ROUTE_6 = 17
+    ROUTE_7 = 18
+    ROUTE_8 = 19
+    ROUTE_9 = 20
+    ROUTE_10 = 21
+    ROUTE_11 = 22
+    ROUTE_12 = 23
+    ROUTE_13 = 24
+    ROUTE_14 = 25
+    ROUTE_15 = 26
+    ROUTE_16 = 27
+    ROUTE_17 = 28
+    ROUTE_18 = 29
+    ROUTE_19 = 30
+    ROUTE_20 = 31
+    ROUTE_21 = 32
+    ROUTE_22 = 33
+    ROUTE_23 = 34
+    ROUTE_24 = 35
+    ROUTE_25 = 36
+    REDS_HOUSE_1F = 37
+    REDS_HOUSE_2F = 38
+    BLUES_HOUSE = 39
+    OAKS_LAB = 40
+    VIRIDIAN_POKECENTER = 41
+    VIRIDIAN_MART = 42
+    VIRIDIAN_SCHOOL = 43
+    VIRIDIAN_HOUSE_1 = 44
+    VIRIDIAN_GYM = 45
+    DIGLETTS_CAVE_ROUTE_2 = 46
+    VIRIDIAN_FOREST_NORTH_GATE = 47
+    ROUTE_2_TRADE_HOUSE = 48
+    ROUTE_2_GATE = 49
+    VIRIDIAN_FOREST_SOUTH_GATE = 50
+    VIRIDIAN_FOREST = 51
+    PEWTER_MUSEUM_1F = 52
+    PEWTER_MUSEUM_2F = 53
+    PEWTER_GYM = 54
+    PEWTER_NIDORAN_HOUSE = 55
+    PEWTER_MART = 56
+    PEWTER_SPEECH_HOUSE = 57
+    PEWTER_POKECENTER = 58
+    MT_MOON_1F = 59
+    MT_MOON_B1F = 60
+    MT_MOON_B2F = 61
+    CERULEAN_TRASHED_HOUSE = 62
+    CERULEAN_TRADE_HOUSE = 63
+    CERULEAN_POKECENTER = 64
+    CERULEAN_GYM = 65
+    BIKE_SHOP = 66
+    CERULEAN_MART = 67
+    MT_MOON_POKECENTER = 68
+    BADGES_CHECK_GATE = 193
+
+class CustomRewards:
+    def __init__(self, loop_size_check=100):
         self.window = []
-        self.window_size = window_size
+        self.loop_size_check = loop_size_check
 
     def update(self, x_pos, y_pos):
         """Update the sliding window with the latest position."""
@@ -31,7 +112,7 @@ class LoopDetector:
             return
         
         self.window.append((x_pos, y_pos))
-        if len(self.window) > self.window_size:
+        if len(self.window) > self.loop_size_check:
             self.window.pop(0)
 
     def detect_loop(self):
@@ -80,7 +161,7 @@ class RedGymEnv(Env):
         self.reset_count = 0
         self.all_runs = []
 
-        self.loop_detector = LoopDetector(window_size=100)
+        self.loop_detector = CustomRewards(loop_size_check=100)
         self.x_pos = 0
         self.y_pos = 0
 
@@ -249,6 +330,9 @@ class RedGymEnv(Env):
         loop_penalty = -10
         if self.loop_detector.detect_loop():
             new_reward += loop_penalty
+        
+        location_reward = self.get_location_reward()
+        new_reward += location_reward
 
         self.last_health = self.read_hp_fraction()
 
@@ -359,7 +443,6 @@ class RedGymEnv(Env):
         new_total = sum([val for _, val in self.progress_reward.items()]) #sqrt(self.explore_reward * self.progress_reward)
         new_step = new_total - self.total_reward
         if new_step < 0 and self.read_hp_fraction() > 0:
-            #print(f'\n\nreward went down! {self.progress_reward}\n\n')
             self.save_screenshot('neg_reward')
     
         self.total_reward = new_total
@@ -385,13 +468,7 @@ class RedGymEnv(Env):
         
         def make_reward_channel(r_val):
             col_steps = self.col_steps
-            # truncate so status bar does not overflow
-            # this used to throw an exception but now is silent!
-            # if you are filling the reward bar you should scale it down
-            # in group_rewards function instead of letting it truncate
             max_r_val = (w-1) * h * col_steps
-            # truncate progress bar. if hitting this
-            # you should scale down the reward in group_rewards!
             r_val = min(r_val, max_r_val)
             row = floor(r_val / (h * col_steps))
             memory = np.zeros(shape=(h, w), dtype=np.uint8)
@@ -615,11 +692,9 @@ class RedGymEnv(Env):
     def read_hp_fraction(self):
         hp_sum = sum([self.read_hp(add) for add in [0xD16C, 0xD198, 0xD1C4, 0xD1F0, 0xD21C, 0xD248]])
         max_hp_sum = sum([self.read_hp(add) for add in [0xD18D, 0xD1B9, 0xD1E5, 0xD211, 0xD23D, 0xD269]])
-        if max_hp_sum > 0:
-            return hp_sum / max_hp_sum
-        else:
-            return 0
-
+        max_hp_sum = max(max_hp_sum, 1)
+        return hp_sum / max_hp_sum
+    
     def read_hp(self, start):
         return 256 * self.read_m(start) + self.read_m(start+1)
 
@@ -678,3 +753,44 @@ class RedGymEnv(Env):
             return map_locations[map_idx]
         else:
             return "Unknown Location"
+
+    def get_location_reward(self):
+        # Read the current map index from the game's memory
+        map_idx = self.read_m(MEM.MAP_NUM)  # Replace with the actual memory address
+        
+        # Define rewards for specific map locations
+        location_rewards = {
+            LOC.REDS_HOUSE_2F: 0.1,
+            LOC.REDS_HOUSE_1F: 0.15,
+            LOC.PALLET_TOWN: 0.20,
+            LOC.BLUES_HOUSE: 0.18,
+            LOC.OAKS_LAB: 0.22,
+            LOC.ROUTE_1: 0.30,
+            LOC.VIRIDIAN_CITY: 0.40,
+            LOC.VIRIDIAN_POKECENTER: 0.45,
+            LOC.VIRIDIAN_MART: 0.44,
+            LOC.VIRIDIAN_HOUSE_1: 0.39,
+            LOC.VIRIDIAN_SCHOOL: 0.39,
+            LOC.ROUTE_22: 0.48,
+            LOC.ROUTE_2: 0.50,
+            LOC.VIRIDIAN_FOREST_SOUTH_GATE: 0.55,
+            LOC.VIRIDIAN_FOREST: 0.60,
+            LOC.VIRIDIAN_FOREST_NORTH_GATE: 0.65,
+            LOC.PEWTER_CITY: 0.75,
+            LOC.PEWTER_POKECENTER: 0.80,
+            LOC.PEWTER_MART: 0.79,
+            LOC.PEWTER_GYM: 0.90,
+            LOC.PEWTER_MUSEUM_1F: 0.70,
+            LOC.PEWTER_MUSEUM_2F: 0.70,
+            LOC.PEWTER_NIDORAN_HOUSE: 0.70,
+            LOC.PEWTER_SPEECH_HOUSE: 0.70,
+            LOC.ROUTE_3: 1.0,
+            LOC.ROUTE_4: 1.1,
+            LOC.MT_MOON_1F: 1.1,
+            LOC.MT_MOON_B1F: 1.15,
+            LOC.MT_MOON_B2F: 1.20,
+            # ... any other specific map rewards ...
+        }
+
+        # Get the reward based on the current map index, defaulting to 0 if not in the list
+        return location_rewards.get(map_idx, 0)
